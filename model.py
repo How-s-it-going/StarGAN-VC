@@ -5,53 +5,48 @@ from tensorflow.keras import layers
 
 class Discriminator(tf.keras.Model):
     """discriminator"""
-    def __init__(self, num_down, num_filters, kernel_size, activation=tf.nn.leaky_relu, num_conv=3, at_size=2**20,
+
+    def __init__(self, num_down, num_filters, kernel_size, activation=spectral_norm, at_size=2 ** 20,
                  pool_size=2):
-        super(Discriminator, self).__init__()
-        self.first_conv = layers.Conv1D(num_filters, kernel_size*3, 1, padding="same", activation=activation)
-        self.first_conv_gates = layers.Conv1D(num_filters, kernel_size*3, 1, padding="same", activation=activation)
+        super(Discriminator, self).__init__(num_down, pool_size)
+        self.first_conv = layers.Conv1D(num_filters, kernel_size * 3, 1, padding="same", activation=activation)
+        self.first_conv_gates = layers.Conv1D(num_filters, kernel_size * 3, 1, padding="same", activation=activation)
         self.conv = [DownsampleBlock(
-                filters=num_filters*(2**(i+1)), kernel_size=kernel_size, strides=1, is_discriminator=True,
-                padding="causal", activation=activation, dilation_rate=2**i, name=f'down_conv_{i}')
+            filters=num_filters * (2 ** (i + 1)), kernel_size=kernel_size, strides=1, is_discriminator=True,
+            padding="causal", activation=activation, dilation_rate=2 ** i, name=f'down_conv_{i}')
             for i in range(num_down)]
-        self.num_down = num_down
         self.out_tf = layers.Conv1D(1, 1, activation=tf.nn.sigmoid, name='discriminator_output_layer')
-        self.pool_size = pool_size
         self.fc = layers.Dense(128, activation=activation)
 
-
     def call(self, inputs, training=None, mask=None):
-        cur = inputs
-        for j in range(self.num_down):
-            for i in self.conv[j]:
-                cur = i(cur)
-            if j != self.num_down - 1:
-                cur = layers.MaxPooling1D(pool_size=self.pool_size)
+        cur = self.first_conv(inputs)
+        gates = self.first_conv_gates(inputs)
+        cur = GatedLinerUnit()([cur, gates])
+        for b in self.conv:
 
-        out_tf = self.out_tf(cur)
-        return out_tf
 
 
 class Generator(tf.keras.Model):
     """generator (U-Net)"""
+
     def __init__(
             self, depth, num_filters, kernel_size, activation=tf.nn.leaky_relu,
             pool_size=2, num_conv=3, out_channels=1, num_bottom=8):
         super(Generator, self).__init__(depth, pool_size, num_conv, num_bottom)
-        self.first_conv = layers.Conv1D(num_filters, kernel_size*3, 1, activation=activation, padding="same")
-        self.first_conv_gates = layers.Conv1D(num_filters, kernel_size*3, 1, activation=activation, padding="same")
+        self.first_conv = layers.Conv1D(num_filters, kernel_size * 3, 1, activation=activation, padding="same")
+        self.first_conv_gates = layers.Conv1D(num_filters, kernel_size * 3, 1, activation=activation, padding="same")
         self.down = [DownsampleBlock(
-                filters=num_filters*(2**(i+1)), kernel_size=kernel_size, strides=2,
-                padding="causal", activation=activation, dilation_rate=2**i, name=f'down_conv_{i}')
+            filters=num_filters * (2 ** (i + 1)), kernel_size=kernel_size, strides=2,
+            padding="causal", activation=activation, dilation_rate=2 ** i, name=f'down_conv_{i}')
             for i in range(depth)]
         self.bottom = [BottomBlock(
-                filters=num_filters*(2**(i+1)), kernel_size=kernel_size, strides=1,
-                padding="causal", activation=activation, dilation_rate=2**i, name=f'up_conv_{i}_')
-            for i in range(depth-1, -1, -1)]
+            filters=num_filters * (2 ** (i + 1)), kernel_size=kernel_size, strides=1,
+            padding="causal", activation=activation, dilation_rate=2 ** i, name=f'up_conv_{i}_')
+            for i in range(depth - 1, -1, -1)]
         self.up = [UpsampleBlock(
-                filters=num_filters*(2**depth), kernel_size=kernel_size, strides=1,
-                padding="causal", activation=activation, name=f'bottom_conv_{j}')
-                for j in range(num_bottom)]
+            filters=num_filters * (2 ** depth), kernel_size=kernel_size, strides=1,
+            padding="causal", activation=activation, name=f'bottom_conv_{j}')
+            for j in range(num_bottom)]
         self.out_layer = layers.Conv1D(out_channels, kernel_size, 1,
                                        activation=tf.nn.sigmoid, name='generator_output_layer')
 
@@ -83,6 +78,7 @@ class ConcatWithTrans(tf.keras.Model):
     """
     Concat with transpose input[1]
     """
+
     def __init__(self, input_shape, axis=-1):
         super(ConcatWithTrans, self).__init__()
         self.axis = axis
@@ -94,7 +90,7 @@ class ConcatWithTrans(tf.keras.Model):
         return layers.Concatenate(self.axis)(
             [inputs[0],
              layers.ZeroPadding1D(
-                 (int(self.diff/2 if self.diff % 2 == 0 else self.diff / 2 + 1), int(self.diff/2))
+                 (int(self.diff / 2 if self.diff % 2 == 0 else self.diff / 2 + 1), int(self.diff / 2))
              )(inputs[1])])
 
 
